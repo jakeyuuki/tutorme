@@ -1,0 +1,991 @@
+﻿<%@ Page Title="" Language="C#" MasterPageFile="~/Views/Shared/Site.Master" Inherits="System.Web.Mvc.ViewPage<dynamic>"%>
+
+<asp:Content ID="Content1" ContentPlaceHolderID="HeaderContent" runat="server">
+	<link href="<%: Url.Content("~/PlugIns/JeeGooContext/jquery.jeegoocontext.css")%>" rel="Stylesheet" type="text/css" />
+	<link href="<%: Url.Content("~/PlugIns/jQueryUI/jquery-ui-1.8.11.custom.css")%>" rel="Stylesheet" type="text/css" media="screen" />
+	<link href="<%: Url.Content("~/PlugIns/jqGrid460/ui.jqgrid.css")%>" rel="Stylesheet" type="text/css" media="screen" />
+	<link href="<%: Url.Content("~/PlugIns/eHub/style.css")%>" rel="Stylesheet" type="text/css" media="screen" />
+	
+	<script src="<%: Url.Content("~/PlugIns/jQueryUI/jquery-ui-1.8.11.custom.min.js")%>" type="text/javascript"></script>
+	<script src="<%: Url.Content("~/PlugIns/jqGrid460/grid.locale-en.js")%>" type="text/javascript"></script>
+	<script src="<%: Url.Content("~/PlugIns/jqGrid460/jquery.jqGrid.min.js")%>" type="text/javascript"></script>
+	<script src="<%: Url.Content("~/PlugIns/eHub/eHub.js")%>" type="text/javascript"></script>
+
+	<script src="<%: Url.Content("~/PlugIns/JeeGooContext/jquery.jeegoocontext.js")%>" type="text/javascript"></script>
+	<script src="<%: Url.Content("~/PlugIns/JSON/json2.js")%>" type="text/javascript"></script>
+
+	<%--<link href="<%: Url.Content("~/PlugIns/jQueryUI-1.11.2/jquery-ui.min.css")%>" rel="Stylesheet" type="text/css" media="screen" />
+	<script src="<%: Url.Content("~/PlugIns/jQueryUI-1.11.2/jquery-ui.min.js")%>" type="text/javascript"></script>--%>
+</asp:Content>
+
+
+<asp:Content ID="Content2" ContentPlaceHolderID="MainContent" runat="server">
+	<div id="errorMessage" class="error" style="display: none"></div>
+	<div id="oceanFields">
+		<table id="oceanTable"></table>
+		<div id="oceanTablePager"></div>
+	</div>
+
+	<button id="oceanUpBtn" disabled="disabled" class="ui-widget">Move Up</button>
+	<button id="oceanDownBtn" disabled="disabled" class="ui-widget">Move Down</button>
+	<button id="setPosBtn" disabled="disabled" class="ui-widget">Set Position:</button>
+	<input id="setPosInput" type="text" size="1" class="ui-pg-input"/>
+
+	<div id="oceanCsvFields">
+		<form action="<%: Url.Action("ExportCSV") %>">
+				<fieldset class="export data-transfer-container">
+						<legend>Export</legend>
+						<input type="submit" value="Export to CSV" id="input_exportcsv" class="ui-widget"/>
+				</fieldset>
+		</form>
+		<form action="<%: Url.Action("ImportCSV") %>" method="post" enctype="multipart/form-data" target="upload_target" >
+				<fieldset class="import data-transfer-container">
+						<legend>Import</legend>
+						<div>
+						<input type="submit" value="Import CSV" class="ui-widget" id="input_importcsv" disabled="disabled" />
+						<input type="file" name="uploadFile" id="uploadFile" class="ui-widget ui-state-default ui-corner-all ui-button-text" size="55" />
+						<iframe id="upload_target" name="upload_target" src="" style="width:0;height:0;border:0px solid #fff;"></iframe>
+						</div>
+				</fieldset>
+		</form>
+	</div>
+
+	<div id="selectClientDialog" title="Select Client" style="display: none">
+		<div id="clientsFields">
+			<table id="clientsTable"></table>
+			<div id="clientsTablePager"></div>
+		</div>
+		<form action="">
+			<input type="hidden" name="clientID" id="clientID" />
+		</form>
+	</div>
+
+	<div id="selectProviderDialog" title="Select Provider" style="display: none">
+		<div id="providersFields">
+			<table id="providersTable"></table>
+			<div id="providersTablePager"></div>
+		</div>
+		<form action="">
+			<input type="hidden" name="providerID" id="providerID" />
+		</form>
+	</div>
+</asp:Content>
+
+<asp:Content ID="Content3" ContentPlaceHolderID="ScriptContent" runat="server">
+	<script type="text/javascript">
+		var lastSel, grid = $("#oceanTable"), defaultValue = '[ANY]', defaultProviderValue;
+		var edited = false;
+
+		$(window).bind('beforeunload', function(){
+			if(edited)
+				return "All your change will be lost in next 5 minute after you close this page, please save all before you exit."
+		});
+
+		window.setInterval(function () {
+			$.post('<%: Url.Action("ExtendSession") %>', function () {
+				// Extend session
+			})
+		}, 240000); // 4 minute
+
+		$(document).ready(function () {
+			$('#errorMessage').ajaxError(function (event, request, settings, exception) {
+				$(this).html("<p>Error retrieving data from " + settings.url + "<\/p>");
+				$(this).show();
+			}).ajaxComplete(function () {
+				$(this).hide()
+			});
+
+			grid.jqGrid({
+				mtype: "POST",
+				datatype: 'json',
+				url: '<%: Url.Action("Values") %>',
+				editurl: '<%: Url.Action("ValuesEdit") %>',
+				jsonReader: { root: 'oceanMessagingValues', id: 'id', repeatitems: false },
+				colNames: ['id', 'Client ID', 'Carrier SCAC', 'Service Provider', '  '],
+				colModel: [
+										{ name: 'id', index: 'id', hidden: true, align: 'center' },
+                    { name: 'client', index: 'client', width: 250, classes: "wrapped", align: 'center', editable: true, search: true, sortable: false, searchoptions: { sopt: ['cn', 'bw', 'ew', 'eq'] },
+                    	edittype: 'custom', editoptions: {
+                    		custom_element: FormatClientEditFields,
+                    		custom_value: function (elem) {
+                    			return $(elem).find('.clientIdValue').val();
+                    		}
+                    	}
+                    },
+                    { name: 'carrier', index: 'carrier', width: 250, classes: "wrapped", align: 'center', editable: true, search: true, sortable: false, searchoptions: { sopt: ['cn', 'bw', 'ew', 'eq'] }
+                    },
+                    { name: 'provider', index: 'provider', width: 250, classes: "wrapped", align: 'center', editable: true, search: true, sortable: false, searchoptions: { sopt: ['cn', 'bw', 'ew', 'eq'] },
+                    	edittype: 'custom', editoptions: {
+                    		custom_element: FormatClientEditFields,
+                    		custom_value: function (elem) {
+                    			return $(elem).find('.providerIdValue').val();
+                    		}
+                    	}
+                    },
+                    { name: 'act', index: 'act', width: 60, align: 'left', sortable: false, search: false }
+                ],
+				rowNum: 15,
+				rowList: [15, 25, 50],
+				pager: '#oceanTablePager',
+				rownumbers: true,
+				ignoreCase: true,
+				scrollingRows: false,
+				viewrecords: true,
+				caption: 'Ocean Carrier Messaging&nbsp;&nbsp;&nbsp;&nbsp;<span class="question">?</span>',
+				height: '345',
+				width: '700',
+				ondblClickRow: myOndblClickRow,
+				onSelectRow: myOnSelectRow,
+				afterInsertRow: myAfterInsertRow
+			});
+
+			grid.jqGrid('filterToolbar', {
+				defaultSearch: 'cn',
+				searchOnEnter: false,
+				afterSearch: function () {
+					clear('search');
+				}
+			});
+
+			$('.ui-search-toolbar').hide();
+
+			grid.jqGrid('sortableRows', {
+				items: ".jqgrow:not(.unsortable)",
+				revert: 300,
+				update: function (e, ui) {
+					if (IsOnSearch()) {
+						$.ehubToast("Search/Filter mode is applied. Please remove all search/filder in order to move row position.");
+						$(this).sortable("cancel");
+						return;
+					}
+					var id = ui.item[0].id;
+					var position = grid.jqGrid('getInd', id);
+					var lastrowid = grid.find('tbody tr:last').get(0).id;
+					var currentPage = grid.getGridParam('page');
+					var rowLimit = grid.jqGrid('getGridParam', 'rowNum');
+					var newPosition = position + (currentPage - 1) * rowLimit;
+					$.getJSON('<%: Url.Action("MoveRow") %>', { id: id, option: "set", newPosition: newPosition, rowLimit: rowLimit }, function (d) {
+						edited = true;
+					})
+				}
+			});
+
+			grid.jqGrid('navGrid', '#oceanTablePager', {
+				edit: true
+			}, { // on edit
+				width: 400,
+				closeAfterEdit: true,
+				closeOnEscape: true,
+				recreateForm: true,
+				viewPagerButtons: true,
+				resize: true,
+				beforeShowForm: function (form) {
+					if (!isEmptyInLineEditing() && loadedDropDownDataProvider && loadedDropDownDataProvider) {
+						$('<div><p class="ui-state-warning">Please Save All Inline-Editing rows before using edit form.<\/p><\/div>').dialog({
+							title: 'Warning',
+							modal: true,
+							resizable: false,
+							buttons: {
+								"Close": function () {
+									$(this).dialog("close");
+									$('#' + getSelectedId() + '_client_val').focus();
+								}
+							}
+						});
+					}
+				},
+				afterShowForm: function () {
+					if (!isEmptyInLineEditing()) {
+						$('#editmodoceanTable .ui-jqdialog-titlebar-close').click();
+						var id = getSelectedId();
+						$('#il_edit_' + id).click();
+						inlineToggle(id);
+					}
+				},
+				afterSubmit: function (response, postdata) {
+					var data = eval('(' + response.responseText + ')');
+					if (data.success == true) {
+						edited = true;
+					}
+					return [data.success, data.message, data.id];
+				}
+			}, { // on add
+				width: 400,
+				editData: {
+					afterRowId: getAfterRowId(),
+					nextid: function () { return "n" + nextid; }
+				},
+				closeAfterAdd: true,
+				closeOnEscape: true,
+				recreateForm: true,
+				viewPagerButtons: true,
+				resize: true,
+				reloadAfterSubmit: true,
+				beforeShowForm: function (form) {
+					if (!isEmptyInLineEditing() && loadedDropDownDataProvider && loadedDropDownDataProvider) {
+						$('<div><p class="ui-state-warning">Please Save All Inline-Editing rows before using add form.<\/p><\/div>').dialog({
+							title: 'Warning',
+							modal: true,
+							resizable: false,
+							buttons: {
+								"Close": function () {
+									$(this).dialog("close");
+									$('#' + getSelectedId() + '_client_val').focus();
+								}
+							}
+						});
+					}
+				},
+				afterShowForm: function () {
+					if (!isEmptyInLineEditing()) {
+						$('#edithdoceanTable .ui-jqdialog-titlebar-close').click();
+					}
+				},
+				afterSubmit: function (response, postdata) {
+					var data = eval('(' + response.responseText + ')');
+					if (data.success == true) {
+						nextid++;
+						edited = true;
+					}
+					return [data.success, data.message, data.id];
+				}
+			}, {}, { // on search
+				afterShowSearch: function () {
+					clear('filter');
+				}
+			}
+			);
+
+			grid.jqGrid('navButtonAdd', '#oceanTablePager', {
+				id: "oceantable_filter",
+				caption: "",
+				title: "Toggle Search Toolbar",
+				buttonicon: 'ui-icon-circle-zoomout',
+				onClickButton: function () {
+					this.toggleToolbar();
+					if ($.isFunction(this.p._complete)) {
+						if ($('.ui-search-toolbar', this.grid.hDiv).is(':visible')) {
+							$('.ui-search-toolbar', this.grid.fhDiv).show();
+						} else {
+							$('.ui-search-toolbar', this.grid.fhDiv).hide();
+						}
+						this.p._complete.call(this);
+						fixPositionsOfFrozenDivs.call(this);
+					}
+				}
+			});
+
+			grid.jqGrid('navButtonAdd', '#oceanTablePager', {
+				id: "oceantable_saveAll",
+				caption: "",
+				title: "Save All to Server",
+				buttonicon: "ui-icon-disk"
+			});
+
+			grid.jqGrid('navButtonAdd', '#oceanTablePager', {
+				id: "inlineAdd",
+				caption: "",
+				title: "Add inline row",
+				buttonicon: "ui-icon-circle-plus"
+			});
+
+			grid.jqGrid('navButtonAdd', '#oceanTablePager', {
+				id: "oceantable_reload",
+				caption: "",
+				title: "Reload from Database",
+				buttonicon: "ui-icon-refresh"
+			});
+
+			grid.jqGrid('navButtonAdd', '#oceanTablePager', {
+				id: "oceantable_refresh",
+				caption: "",
+				title: "Refresh current cache(Not clear cache)",
+				buttonicon: "ui-icon-arrowrefresh-1-w"
+			});
+
+			$('#input_exportcsv').button();
+			$('#input_importcsv').button();
+			$("#inlineAdd").insertBefore("#add_oceanTable");
+			$("#oceantable_filter").insertAfter("#refresh_oceanTable");
+			$("#search_oceanTable").insertAfter("#refresh_oceanTable");
+			$('#oceanUpBtn').appendTo('#oceanTablePager_right');
+			$('#oceanDownBtn').appendTo('#oceanTablePager_right');
+			$('#setPosBtn').appendTo('#oceanTablePager_right');
+			$('#setPosInput').appendTo('#oceanTablePager_right');
+			$('#oceantable_refresh').insertBefore('#refresh_oceanTable');
+			$('#refresh_oceanTable').hide();
+			$('#oceanTablePager_right div').replaceWith(function () { return '<a id="totalRows" dir="ltr" style="text-align:right" class="ui-paging-info">' + this.innerHTML + '</a>'; });
+			$('#oceanTablePager_right div').remove();
+			$('#totalRows').insertAfter('#setPosInput');
+			$('<a>/</a>').insertBefore('#totalRows');
+
+			$("span.question").hover(function () {
+				$(this).append('<div class="tooltip"><p class="first">&middot;  Drag&Drop to change the row order.</p><p>&middot;  E - means edit, D - means Delete, S - means Save and C - means Cancel Editing.</p>'
+				+ '<p class="last">&middot;  Scrolldown any dropdown list to load more data in that dropdown list.</p>' + '</div>');
+			}, function () {
+				$("div.tooltip").remove();
+			});
+
+			$("#inlineAdd").click(function () {
+				var newId = nextid++;
+				var newIdString = "n" + newId;
+				var newData = { id: newIdString, client: defaultValue, carrier: defaultValue, provider: defaultProviderValue, afterRowId: getAfterRowId(), oper: "add" };
+				$.post('<%: Url.Action("ValuesEdit") %>', newData, function () {
+					//Set the page to the last page
+					var currentPage = grid.getGridParam('page');
+					var lastPage = grid.getGridParam('lastpage');
+					if (currentPage != lastPage)
+						grid.setGridParam({ page: lastPage }).trigger("reloadGrid");
+					grid.addRowData(newIdString, newData, "beforeSelected");
+					setTimeout(function () { $('#il_edit_' + newIdString).click(); }, 50);
+					$('#oceanTable input').blur();
+					edited = true;
+				})
+			});
+
+			$('#oceantable_reload').click(function () {
+				$.post('<%: Url.Action("ClearCache") %>', function () {
+					$('#refresh_oceanTable').click();
+					edited = false;
+					nextid = 0;
+				})
+			});
+
+			$('#oceantable_refresh').click(function () {
+				$.post('<%: Url.Action("ReformatSessionRowID") %>', function () {
+					$('#refresh_oceanTable').click();
+					nextid = 0;
+				})
+			});
+
+			$('#oceantable_saveAll').click(function () {
+				grid.trigger("reloadGrid", [{ page: grid.getGridParam('page')}]);
+				$.getJSON('<%: Url.Action("SaveAll") %>', function (d) {
+					$.ehubToast(d.message);
+					edited = false;
+				})
+			});
+
+			$('#oceanUpBtn').click(function () {
+				if (IsOnSearch()) {
+					$.ehubToast("Search/Filter mode is applied. Please remove all search/filder in order to move row position.");
+					return;
+				}
+				var id = getSelectedId();
+				if (!id) return;
+				var position = getSelectedPosition();
+				var rowLimit = grid.jqGrid('getGridParam', 'rowNum');
+				position--;
+
+				if (position > 0) {
+					var rows = $('tr', grid);
+					$('#' + id).insertBefore(rows.eq(position));
+					myOnSelectedPosition(position);
+				}
+				$.post('<%: Url.Action("MoveRow") %>', { id: id, option: "up", rowLimit: rowLimit }, function (d) {
+					// Move all the upper code into here if there is bug
+					// Did move codes to before this post method to load faster in client side
+					if (position <= 0) {
+						grid.trigger("reloadGrid", [{ page: d.page}]);
+						selectRowAfterMove(id);
+						edited = true;
+					}
+				})
+			});
+
+			$('#oceanDownBtn').click(function () {
+				if (IsOnSearch()) {
+					$.ehubToast("Search/Filter mode is applied. Please remove all search/filder in order to move row position.");
+					return;
+				}
+				var id = getSelectedId();
+				if (!id) return;
+				var position = getSelectedPosition();
+				var rowLimit = grid.jqGrid('getGridParam', 'rowNum');
+				position++;
+				var rows = $('tr', grid);
+				if (position < rows.length) {
+					$('#' + id).insertAfter(rows.eq(position));
+					myOnSelectedPosition(position);
+				}
+				$.post('<%: Url.Action("MoveRow") %>', { id: id, option: "down", rowLimit: rowLimit }, function (d) {
+					// Move all the upper code into here if there is bug
+					// Did move codes to before this post method to load faster in client side
+					if (position >= rows.length) {
+						grid.trigger("reloadGrid", [{ page: d.page}]);
+						selectRowAfterMove(id);
+						edited = true;
+					}
+				})
+			});
+
+			$('#setPosBtn').click(function () {
+				if (IsOnSearch()) {
+					$.ehubToast("Search/Filter mode is applied. Please remove all search/filder in order to move row position.");
+					return;
+				}
+				var id = getSelectedId();
+				if (!id) return;
+				var position = getSelectedPosition();
+				var newPosition = $('#setPosInput').val();
+				var rowLimit = grid.jqGrid('getGridParam', 'rowNum');
+				$.getJSON('<%: Url.Action("MoveRow") %>', { id: id, option: "set", newPosition: newPosition, rowLimit: rowLimit }, function (d) {
+					grid.trigger("reloadGrid", [{ page: d.page}]);
+					selectRowAfterMove(id);
+					edited = true;
+				})
+			});
+
+			$('#setPosInput').keyup(function () {
+				var value = $(this).val();
+				grid.getGridParam('lastpage');
+				if (!value) return;
+				var max = parseInt($('#totalRows').html()) - 1;
+
+				try {
+					var newValue = parseInt(value);
+					if (!newValue)
+						$(this).val(1);
+					else if (value > max)
+						$(this).val(max);
+					else
+						$(this).val(newValue);
+				}
+				catch (err) {
+					$(this).val(1);
+				}
+			});
+
+			var nextid = 0;
+
+			$.getJSON('<%: Url.Action("ClientsDropDown") %>', function (d) {
+				data.pushArray(d);
+				loadedDropDownData = true;
+			})
+
+			$.getJSON('<%: Url.Action("ProvidersDropDown") %>', function (d) {
+				dataProvider.pushArray(d);
+				dataProviderReject = $.merge([{ value: 'Reject'}], dataProvider);
+				loadedDropDownDataProvider = true;
+			})
+		});
+	</script>
+
+	<script type="text/javascript">
+		var currentSelectedId;
+
+		function myOndblClickRow(id, ri, ci) {
+			var editButton = $('#il_edit_' + id);
+			if (editButton.is(":visible"))
+				editButton.click();
+		}
+
+		function myOnSelectRow(currentSelectedId) {
+			var position = grid.jqGrid('getInd', currentSelectedId);
+
+			if (currentSelectedId != 'default') {
+				$('#setPosBtn').removeAttr("disabled");
+				if (!$('#del_oceanTable').is(":visible")) $('#del_oceanTable').show();
+				myOnSelectedPosition(position);
+			}
+			else {
+				$('#oceanUpBtn').attr("disabled", "true");
+				$('#oceanDownBtn').attr("disabled", "true");
+				$('#setPosBtn').attr("disabled", "true");
+				$('#del_oceanTable').hide();
+			}
+		}
+
+		function myOnSelectedPosition(position) {
+			var lastposition = grid.jqGrid('getInd', 'default');
+			var currentPage = grid.getGridParam('page');
+			var lastPage = grid.getGridParam('lastpage');
+
+			if (currentPage != 1 || position > 1)
+				$('#oceanUpBtn').removeAttr("disabled");
+			else
+				$('#oceanUpBtn').attr("disabled", "true");
+
+			// if lastpositon == null or not last position
+			if (!lastposition || position < lastposition - 1) 
+				$('#oceanDownBtn').removeAttr("disabled");
+			else
+				$('#oceanDownBtn').attr("disabled", "true");
+		}
+
+		function getAfterRowId() {
+			var selr = jQuery('#grid').jqGrid('getGridParam', 'selrow');
+			return selr != null ? selr : 'default';
+		}
+
+		function getSelectedId() {
+			return grid.getGridParam("selrow");
+		}
+
+		function getSelectedPosition() {
+			return grid.jqGrid('getInd', getSelectedId());
+		}
+
+		function getLastPosition() {
+			return grid.jqGrid('getInd', 'default');
+		}
+
+		function onEditUneditableCell(id) {
+			$('.not-editable-cell', '#default').html("Default");
+		}
+
+		function myAfterInsertRow(id, data, el) {
+			addActionsOnRow(id);
+			$('#jSaveButton_' + id).find("span").removeClass("ui-icon-disk")
+												.addClass("ui-icon-check");
+			if (id == "default") {
+				grid.setRowData('default', false, 'unsortable');
+				grid.jqGrid('setCell', 'default', 'client', '', 'not-editable-cell');
+				grid.jqGrid('setCell', 'default', 'carrier', '', 'not-editable-cell');
+				$('#jDeleteButton_default').remove();
+			}
+		}
+
+		function selectRowAfterMove(id) {
+			setTimeout(function () { grid.jqGrid("setSelection", id); ; }, 100);
+		}
+
+		function addActionsOnRow(cl) {
+			be = "<input id='il_edit_" + cl + "' style='height:22px;width:20px;' type='button' value='E' onclick=\"editRow('" + cl + "');\"  />";
+			de = cl != 'default' ? "<input id='il_delete_" + cl + "'style='height:22px;width:20px;' type='button' value='D' onclick=\"deleteRow('" + cl + "');\"  />" : '';
+			se = "<input id='il_save_" + cl + "'style='height:22px;width:20px;display: none;' class='inlinesave' type='button' value='S' onclick=\"saveRow('" + cl + "');\"  />";
+			ce = "<input id='il_cancel_" + cl + "'style='height:22px;width:20px;display: none;' type='button' value='C' onclick=\"restoreRow('" + cl + "');\" />";
+			grid.jqGrid('setRowData', cl, { act: be + de + se + ce });
+		}
+
+		function clear(options) {
+			grid.jqGrid('setGridParam', { search: false });
+
+			var postData = grid.jqGrid('getGridParam', 'postData');
+
+			if (options == 'search') {
+				$('#searchcntfbox_oceanTable :input').val("");
+				$.extend(postData, { searchField: "", searchString: "", searchOper: "" });
+			}
+			else {
+				$('#gs_client').val("");
+				$('#gs_carrier').val("");
+				$('#gs_provider').val("");
+				$.extend(postData, { filters: "" });
+			}
+
+			grid.trigger("reloadGrid", [{ page: 1}]);
+		}
+
+		function myGridComplete() {
+			var ids = grid.jqGrid('getDataIDs');
+			for (var i = 0; i < ids.length; i++) {
+				var cl = ids[i];
+				addActionsOnRow(cl);
+			}
+		}
+
+		function editRow(id) {
+			grid.editRow(id, false, // turn true for [Enter] key to save the row and [Esc] to cancel editing.
+				function (rowid) { //onEditFunc
+					onEditUneditableCell(rowid);
+					FormatClientInlineEditSetting(rowid, true);
+				},
+				null, null, {}, function (response) { saveRow(id); }, {}, function (response) { restoreRow(id); });
+			inlineToggle(id);
+			edited = true;
+		}
+
+		function deleteRow(id) {
+			grid.jqGrid('delRowData', id);
+			$.post('<%: Url.Action("ValuesEdit") %>', { id: id , oper: "del"}, function (d) {
+				// Move all the upper code into here if there is bug
+				// Did move codes to before this post method to load faster in client side
+				edited = true;
+			})
+		}
+
+		function saveRow(id) {
+			if (emptyProvider(id)) return;
+			var rids = grid.jqGrid('getDataIDs');
+			var afterRowId = rids[grid.jqGrid('getInd', id)];
+			if (!loadedDropDownData || !loadedDropDownDataProvider) return;
+			$('#'+id).find('input').blur();
+			var nextSaveButton = $('#' + id).next('tr').find('.inlinesave');
+			if (nextSaveButton.is(':visible')) nextSaveButton.click();
+			grid.saveRow(id, {
+				extraparam: { afterRowId: afterRowId }
+			});
+			setTimeout(function () { inlineToggle(id); }, 100);
+			edited = true;
+		}
+
+		function restoreRow(id) {
+			grid.restoreRow(id);
+			var providerValue = grid.getRowData(id)['provider'];
+			// If the data of provider is not empty, work normal, else remove the current row after adding a inline row.
+			if (providerValue != '&nbsp;' && providerValue != '')
+				inlineToggle(id);
+			else
+				deleteRow(id);
+		}
+
+		function emptyProvider(id) {
+			var val = $('#' + id + '_provider_val').val();
+			if (val == '') {
+				restoreRow(id);
+				$.ehubToast('Fail to save inline change because of empty provider.');
+				return true;
+			}
+			return false;
+		}
+
+		var toggleCount = 0;
+		function inlineToggle(id) {
+			$('#il_edit_' + id).toggle();
+			$('#il_delete_' + id).toggle();
+			$('#il_save_' + id).toggle();
+			$('#il_cancel_' + id).toggle();
+		}
+
+		function isEmptyInLineEditing() {
+			return !grid.find("span.editable")[0] || !$('.inlinesave').length;
+		}
+
+		function rowEdit(id) {
+			if (id == "default")
+				return false;
+		}
+
+		function IsOnSearch() {
+			var empty = !$('#gs_client').val() && !$('#gs_carrier').val() && !$('#gs_provider').val() & !$('#jqg1').val();
+			return !empty;
+		}
+
+		function FormatClientEditFields(value, options) {
+			var idVal = options.id == 'client' ? 'clientIdValue' : 'providerIdValue';
+			var elemStr = '<span><input id="' + options.id + '_val" value="' + value +
+								'" class="FormElement ui-widget-content ui-corner-all ' + idVal + '" role="textbox" type="text" readonly="true"/>' +
+								' <a class="fm-button ui-state-default ui-corner-all idSelect">Select</a>';
+			var elem = $(elemStr)[0];
+			$(elem).children('.idSelect').click(function () {
+				DisplaySelectDialog($(elem).children('.' + idVal), options.id);
+			});
+			return elem;
+		}
+
+		function FormatClientInLineEditFields(rowid, optionsid, value) {
+			var inputid = rowid + "_" + optionsid + "_val";
+			var val = $(value).find(".FormElement").attr("value");
+			var idVal = optionsid == 'client' ? 'clientIdValue' : 'providerIdValue';
+			var elemStr = '<input id="' + inputid + '" class="FormElement ui-widget-content ui-corner-all ' + idVal + '" role="textbox" type="text"/>';
+			$('#' + rowid + '_' + optionsid).empty().html(elemStr);
+			var element = $('#' + inputid);
+
+			if (optionsid == 'client')
+				bindInputDropDown(element, data, val, defaultValue);
+			else if (rowid == 'default')
+				bindInputDropDown(element, dataProviderReject, val, dataProviderReject[0].value);
+			else
+				bindInputDropDown(element, dataProvider, val, '');
+		}
+
+		var loadedDropDownData = false;
+		var loadedDropDownDataProvider = false;
+		function FormatClientInlineEditSetting(rowid, firstLoadDropdown) {
+			if (!loadedDropDownData || !loadedDropDownDataProvider) {
+				if (firstLoadDropdown) {
+					if (rowid != "default") {
+						$('#' + rowid + '_client').children().hide();
+						$('#' + rowid + '_client').prepend('<span><img src="<%: Url.Content("~/PlugIns/eHub/images/loading.gif")%>" style="width:180px;height:16px"></span>');
+					}
+					$('#' + rowid + '_provider').children().hide();
+					$('#' + rowid + '_provider').prepend('<span><img src="<%: Url.Content("~/PlugIns/eHub/images/loading.gif")%>" style="width:180px;height:16px"></span>');
+					$.ehubToast("Please use add/edit button in the navigation bar(bottom of this table) while inline contents are loading.");
+				}
+				setTimeout(function () { FormatClientInlineEditSetting(rowid, false) }, 1000);
+			}
+			else {
+				if (rowid != "default") FormatClientInLineEditFields(rowid, "client", grid.getCell(rowid, 'client'));
+				FormatClientInLineEditFields(rowid, "provider", grid.getCell(rowid, 'provider'));
+			}
+		}
+
+		function DisplaySelectDialog(elem, option) {
+			if (option == "client")
+				DisplaySelectClientDialog(elem);
+			else
+				DisplaySelectProviderDialog(elem);
+		}
+
+		function DisplaySelectClientDialog(elem) {
+			$("#selectClientDialog").dialog({
+				title: 'Select Client',
+				width: "auto",
+				position: { my: "left top", at: "left+100 top-100", of: $(elem) },
+				resizable: false,
+				modal: true,
+				buttons: {
+					"Select": function () {
+						var selectID = $('#selectClientDialog #clientID').val();
+						if (selectID == "") {
+							DisplayError("Please select a client.");
+						}
+						else {
+							$(elem).val(selectID);
+							$(this).dialog("close");
+						}
+					},
+					Cancel: function () {
+						$(this).dialog("close");
+					}
+				}
+			});
+
+			$("#clientsTable").jqGrid({
+				datatype: 'json',
+				url: '<%: Url.Action("Clients") %>',
+				jsonReader: { root: 'eHubClients', id: 'CC_ID', repeatitems: false },
+				colNames: ['Client ID', 'Name'],
+				colModel: [
+						{ name: 'CC_ID', width: 100, classes: "wrapped", sortable: true, search: true },
+						{ name: 'CC_FriendlyName', width: 300, classes: "wrapped", sortable: true, search: true }
+					],
+				onSelectRow: function (id) {
+					$('#selectClientDialog #clientID').val(id)
+				},
+				height: '400',
+				width: '400',
+				rowNum: 15,
+				rowList: [15, 30, 50],
+				sortname: 'CC_ID',
+				sortorder: 'asc',
+				pager: '#clientsTablePager'
+			});
+			$("#clientsTable").jqGrid('navGrid', '#clientsTablePager', { search: false, refresh: false, add: false, edit: false, del: false });
+			$("#clientsTable").jqGrid('filterToolbar', { searchOnEnter: false });
+		}
+
+		function DisplaySelectProviderDialog(elem) {
+			$("#selectProviderDialog").dialog({
+				title: 'Select Service Provider',
+				width: "auto",
+				position: { my: "left top", at: "left+100 top-100", of: $(elem) },
+				resizable: false,
+				modal: true,
+				buttons: {
+					"Select": function () {
+						var selectID = $('#selectProviderDialog #providerID').val();
+						if (selectID == "") {
+							DisplayError("Please select a service provider.");
+						}
+						else {
+							$(elem).val(selectID);
+							$(this).dialog("close");
+						}
+					},
+					Cancel: function () {
+						$(this).dialog("close");
+					}
+				}
+			});
+
+			$("#providersTable").jqGrid({
+				datatype: 'json',
+				url: '<%: Url.Action("ServiceProviders") %>',
+				jsonReader: { root: 'serviceProvider', id: 'ID', repeatitems: false },
+				colNames: ['Service Provider'],
+				colModel: [
+						{ name: 'ID', width: 200, classes: "wrapped", sortable: true, search: true }
+					],
+				onSelectRow: function (id) {
+					$('#selectProviderDialog #providerID').val(id)
+				},
+				height: '400',
+				width: '200',
+				rowNum: 15,
+				rowList: [15, 30, 50],
+				sortname: 'CC_ID',
+				sortorder: 'asc',
+				pager: '#providersTablePager'
+			});
+			$("#providersTable").jqGrid('navGrid', '#providersTablePager', { search: false, refresh: false, add: false, edit: false, del: false });
+			$("#providersTable").jqGrid('filterToolbar', { searchOnEnter: false });
+		}
+
+		function GetOption(id) {
+			if (id == "provider")
+				return id;
+			return "client";
+		}
+
+		function DisplayError(errorMsg) {
+			$('<div><p class="ui-state-error">' + errorMsg + '<\/p><\/div>').dialog({ title: 'Error', modal: true, width: "auto" });
+		}
+
+		var oldAddRowData = $.fn.jqGrid.addRowData;
+
+		var data = [
+			{ value: defaultValue, label: defaultValue }
+		];
+
+		var dataProvider = [];
+		var dataProviderReject;
+
+		var firstLoadDropdown = true;
+		function bindInputDropDown(element, data, value, defaultValue, columnName) {
+			var lostFocus = false;
+			element.bind('focus', function () { $(this).autocomplete("search"); });
+			element.autocomplete({
+				source: data,
+				minLength: 0,
+				autoFocus: true
+			}).val(value).data('autocomplete')._trigger('select');
+			element.blur(function () {
+				if (!lostFocus) {
+					lostFocus = true;
+					autoFillValidValue(element, data, defaultValue);
+				}
+			}).keydown(function (e) {
+				switch (e.keyCode) {
+					case 13: this.blur();
+						break;
+				}
+			}).focus(function () {
+				//reset result list's pageindex when focus on
+				lostFocus = false;
+        window.pageIndex = 0;
+			});
+			element.combobox();
+		}
+
+		function autoFillValidValue(element, data, defaultValue) {
+			var value = element.val();
+			if (element.val() == '') {
+				element.val(defaultValue);
+				if (defaultValue == '') return;
+			}
+			for (var i = 0; i < data.length; i++) {
+				if (data[i].value == value) {
+					return;
+				}
+			}
+			for (var i = 0; i < data.length; i++) {
+				var str = data[i].value + " - " + data[i].label;
+				if (str.toLowerCase().indexOf(value.toLowerCase()) >= 0) {
+					element.val(data[i].value);
+					return;
+				}
+			}
+			element.val(defaultValue);
+		}
+	</script>
+
+	<script type="text/javascript">
+		// CSV Import/Export
+		$('#upload_target').load(function () {
+			grid.trigger("reloadGrid");
+		});
+
+		$("#uploadFile").change(UploadFileChanged);
+
+		function UploadFileChanged() {
+			if ($(this).val() == "") {
+				$("#input_importcsv").button("disable");
+			} else {
+				$("#input_importcsv").button("enable");
+			}
+		};
+	</script>
+
+	<script type="text/javascript">
+
+		// Extension, move to eHub.js's classes in future.
+		$.jgrid.extend({
+			addRowData: function (rowid, rdata, pos, src) {
+				if (pos === 'afterSelected' || pos === 'beforeSelected') {
+					if (typeof src === 'undefined' && this[0].p.selrow !== null) {
+						src = this[0].p.selrow;
+						pos = (pos === "afterSelected") ? 'after' : 'before';
+					} else {
+						src = this.find('tbody tr:last').get(0).id;
+						pos = (pos === "afterSelected") ? 'last' : src ? 'before' : 'first';
+					}
+				}
+				return oldAddRowData.call(this, rowid, rdata, pos, src);
+			}
+		});
+
+		$.extend($.ui.autocomplete.prototype, {
+			_renderMenu: function (ul, items) {
+				//remove scroll event to prevent attaching multiple scroll events to one container element
+				$(ul).unbind("scroll");
+				this._scrollMenu(ul, items);
+			},
+
+			_scrollMenu: function (ul, items) {
+				var self = this;
+				var maxShow = 20;
+				var results = [];
+				var pages = Math.ceil(items.length / maxShow);
+				results = items.slice(0, maxShow);
+
+				if (pages > 1) {
+					$(ul).scroll(function () {
+						if (isScrollbarBottom($(ul)) && window.pageIndex < pages) {
+							// Will upgade in eHub.class to get ajax update when scrolling ***************** IMPORTANT ***********************
+							++window.pageIndex;
+							results = items.slice(window.pageIndex * maxShow, window.pageIndex * maxShow + maxShow);
+
+							//append item to ul
+							$.each(results, function (index, item) {
+								self._renderItem(ul, item);
+							});
+							//refresh menu
+							self.menu.deactivate();
+							self.menu.refresh();
+							// size and position menu
+							ul.show();
+							self._resizeMenu();
+							ul.position($.extend({ of: self.element }, self.options.position));
+						}
+					});
+				}
+
+				$.each(results, function (index, item) {
+					self._renderItem(ul, item);
+				});
+			},
+
+			_renderItem: function (ul, item) {
+				try {
+					var newText = String(item.label).replace(
+													new RegExp(this.term, "gi"),
+													"<span class='bold-text'>$&</span>");
+
+					return $("<li></li>")
+											.data("item.autocomplete", item)
+											.append("<a>" + newText + "</a>")
+											.appendTo(ul);
+				}
+				catch (err) {
+					return item;
+				}
+			}
+		});
+
+		function isScrollbarBottom(container) {
+			var height = container.outerHeight();
+			var scrollHeight = container[0].scrollHeight;
+			var scrollTop = container.scrollTop();
+			if (scrollTop >= scrollHeight - height) {
+				return true;
+			}
+			return false;
+		}
+
+		Array.prototype.pushArray = function (arr) {
+			this.push.apply(this, arr);
+		}
+	</script>
+</asp:Content>

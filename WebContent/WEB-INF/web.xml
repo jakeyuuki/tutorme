@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:web="http://java.sun.com/xml/ns/javaee"
+	xsi:schemaLocation="http://java.sun.com/xml/ns/javaee http://java.sun.com/xml/ns/javaee/web-app_2_5.xsd"
+	id="WebApp_ID" version="2.5">
+	<display-name>TutorMeWebApplication</display-name>
+	<welcome-file-list>
+		<welcome-file>index.html</welcome-file>
+		<welcome-file>index.htm</welcome-file>
+		<welcome-file>index.jsp</welcome-file>
+		<welcome-file>default.html</welcome-file>
+		<welcome-file>default.htm</welcome-file>
+		<welcome-file>default.jsp</welcome-file>
+	</welcome-file-list>
+	<servlet>
+		<description></description>
+		<display-name>LoginController</display-name>
+		<servlet-name>LoginController</servlet-name>
+		<servlet-class>tutorme.controllers.LoginController</servlet-class>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>LoginController</servlet-name>
+		<url-pattern>/login</url-pattern>
+	</servlet-mapping>
+	<servlet>
+		<description></description>
+		<display-name>RegisterController</display-name>
+		<servlet-name>RegisterController</servlet-name>
+		<servlet-class>tutorme.controllers.RegisterController</servlet-class>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>RegisterController</servlet-name>
+		<url-pattern>/register</url-pattern>
+	</servlet-mapping>
+	<servlet>
+		<description></description>
+		<display-name>CourseController</display-name>
+		<servlet-name>CourseController</servlet-name>
+		<servlet-class>tutorme.controllers.CourseController</servlet-class>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>CourseController</servlet-name>
+		<url-pattern>/course</url-pattern>
+	</servlet-mapping>
+	<servlet>
+		<description></description>
+		<display-name>TutorController</display-name>
+		<servlet-name>TutorController</servlet-name>
+		<servlet-class>tutorme.controllers.TutorController</servlet-class>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>TutorController</servlet-name>
+		<url-pattern>/tutor</url-pattern>
+	</servlet-mapping>
+	<servlet>
+		<description></description>
+		<display-name>TutorManagementController</display-name>
+		<servlet-name>TutorManagementController</servlet-name>
+		<servlet-class>tutorme.controllers.TutorManagementController</servlet-class>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>TutorManagementController</servlet-name>
+		<url-pattern>/tutorProfile</url-pattern>
+	</servlet-mapping>
+	<servlet>
+		<description></description>
+		<display-name>ProfileController</display-name>
+		<servlet-name>ProfileController</servlet-name>
+		<servlet-class>tutorme.controllers.ProfileController</servlet-class>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>ProfileController</servlet-name>
+		<url-pattern>/myProfile</url-pattern>
+	</servlet-mapping>
+		<servlet>
+		<description></description>
+		<display-name>ApplicationController</display-name>
+		<servlet-name>ApplicationController</servlet-name>
+		<servlet-class>tutorme.controllers.ApplicationController</servlet-class>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>ApplicationController</servlet-name>
+		<url-pattern>/tutorApplication</url-pattern>
+	</servlet-mapping>
+
+	
+	<servlet>
+    	<servlet-name>AJAX Controllers</servlet-name>
+    	<servlet-class>org.glassfish.jersey.servlet.ServletContainer</servlet-class>
+     	<!-- Register resources and providers under com.vogella.jersey.first package. -->
+    	<init-param>
+        	<param-name>javax.ws.rs.Application</param-name>
+            <param-value>tutorme.controllers.AjaxControllers</param-value>
+    	</init-param>
+    	<load-on-startup>1</load-on-startup>
+  	</servlet>
+  	<servlet-mapping>
+   		<servlet-name>AJAX Controllers</servlet-name>
+    	<url-pattern>/controller/*</url-pattern>
+  	</servlet-mapping>
+	
+	<!-- Services -->
+	<servlet>
+    	<servlet-name>Jersey REST Service</servlet-name>
+    	<servlet-class>org.glassfish.jersey.servlet.ServletContainer</servlet-class>
+     	<!-- Register resources and providers under com.vogella.jersey.first package. -->
+    	<init-param>
+        	<param-name>javax.ws.rs.Application</param-name>
+        	<param-value>tutorme.services.Services</param-value>
+    	</init-param>
+    	<load-on-startup>1</load-on-startup>
+  	</servlet>
+  	<servlet-mapping>
+   		<servlet-name>Jersey REST Service</servlet-name>
+    	<url-pattern>/rest/*</url-pattern>
+  	</servlet-mapping>
+</web-app>

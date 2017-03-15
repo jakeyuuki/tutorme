@@ -1,0 +1,728 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Web.Mvc;
+using CargoWise.eHub.DataModel.eHubTransactions;
+using CargoWise.eHub.Shared.RoutingRuleEngine;
+
+namespace CargoWise.eHub.Portal.Controllers.Service
+{
+	public class OceanCarrierMessagingController : Controller
+	{
+		public OceanCarrierMessagingController()
+			: this(new eHubTransactionsContext())
+		{ }
+
+		public OceanCarrierMessagingController(eHubTransactionsContext context)
+		{
+			this.context = context;
+			rule = Rule.Get(context, context.eHubClients.First(c => c.CC_ID == "SHIPPING_INSTRUCTION"));
+		}
+
+		eHubTransactionsContext context;
+		readonly Rule rule;
+		LinkedList<Row> cache;
+		LinkedList<Row> backup;
+		const int START_ID = 1;
+		const string ADDVALUE_DEFAULTCLIENT = "[ANY]";
+
+		public eHubTransactionsContext Context { set { context = value; } }
+		public Rule Rules { get { return rule; } }
+
+		#region public method
+
+		public ActionResult Index()
+		{
+			return View();
+		}
+
+		public JsonResult SaveAll()
+		{
+			return Json(new { message = SaveAllCore() }, JsonRequestBehavior.AllowGet);
+		}
+
+		public JsonResult ClientsDropDown()
+		{
+			return Json(GetClientsDropDown(), JsonRequestBehavior.AllowGet);
+		}
+
+		public JsonResult Clients()
+		{
+			return Json(GetClients(), JsonRequestBehavior.AllowGet);
+		}
+
+		public JsonResult ServiceProviders()
+		{
+			return Json(GetServiceProviders(), JsonRequestBehavior.AllowGet);
+		}
+
+		public JsonResult ProvidersDropDown()
+		{
+			return Json(GetProvidersDropDown(), JsonRequestBehavior.AllowGet);
+		}
+
+		public JsonResult Values()
+		{
+			int page = string.IsNullOrEmpty(Request["page"]) ? 1 : Convert.ToInt32(Request["page"]);
+			int rows = Convert.ToInt32(Request["rows"]);
+			var list = GetValues();
+			int count = list.Count();
+
+			var total = (int)Math.Ceiling((double)count / (double)rows);
+			if (page > total) page = total;
+			var vals = list.Skip((page - 1) * rows).Take(rows).ToList();
+
+
+			return Json(new
+			{
+				page = page,
+				total = total,
+				records = count,
+				oceanMessagingValues = vals
+			}, JsonRequestBehavior.AllowGet);
+		}
+
+		public void ClearCache()
+		{
+			Session["oceanMessaging"] = null;
+		}
+
+		public JsonResult MoveRow()
+		{
+			var page = MoveRowCore();
+			return Json(new { page = page }, JsonRequestBehavior.AllowGet);
+		}
+
+		public void ReformatSessionRowID()
+		{
+			var sessionCache = Session["oceanMessaging"] as LinkedList<Row>;
+			if (sessionCache != null)
+			{
+				var count = START_ID;
+				var node = sessionCache.First;
+				while (node != sessionCache.Last) // change all id except last one
+				{
+					node.Value.id = count++ + "";
+					node = node.Next;
+				}
+			}
+			Session["oceanMessaging"] = sessionCache;
+		}
+
+		[HttpPost]
+		public JsonResult ValuesEdit()
+		{
+			try
+			{
+				var id = ValuesEditCore();
+				return Json(new { success = true, id = id }, JsonRequestBehavior.AllowGet);
+			}
+			catch (Exception ex)
+			{
+				return Json(new { success = false, message = ex.Message }, JsonRequestBehavior.AllowGet);
+			}
+		}
+
+		[HttpGet]
+		public FileContentResult ExportCSV()
+		{
+			return File(GetValuesExportCsv(), "text/csv", "oceanCarrierMessaging.csv");
+		}
+
+		[HttpPost]
+		public void ImportCSV()
+		{
+			try
+			{
+				ImportCsvCore();
+				Response.Write("Success");
+			}
+			catch (ArgumentException ex)
+			{
+				Response.Write(ex.Message);
+			}
+		}
+
+		public ActionResult ExtendSession()
+		{
+			// Do nothing but extend the session
+			return new EmptyResult();
+		}
+
+		#endregion
+
+		#region private methods
+
+		#region LocalCache Set Get
+
+		List<dynamic> GetValues()
+		{
+			cache = GetOceanMessagingCache();
+			var vals = cache.Select(x => new { id = x.id, client = x.client, carrier = x.carrier, provider = x.provider });
+			var defaultVal = vals.FirstOrDefault(x => x.id.Equals("default"));
+			var list = FilterValues(vals);
+			if (!list.Any(x => x.id.Equals("default")))
+			{
+				list.Add(defaultVal);
+			}
+			return list;
+		}
+
+		string ValuesEditCore()
+		{
+			cache = GetOceanMessagingCache();
+			var id = Request["id"];
+			switch (Request["oper"])
+			{
+				case "add":
+					AddValues(id);
+					break;
+				case "edit":
+					EditValues(id);
+					break;
+				case "del":
+					DeleteValues(id);
+					break;
+				default:
+					break;
+			}
+			Session["oceanMessaging"] = cache;
+			return id;
+		}
+
+		int MoveRowCore()
+		{
+			cache = GetOceanMessagingCache();
+			var id = Request["id"];
+			switch (Request["option"])
+			{
+				case "up":
+					MoveUp(cache.Find(cache.FirstOrDefault(x => x.id.Equals(id))));
+					break;
+				case "down":
+					MoveDown(cache.Find(cache.FirstOrDefault(x => x.id.Equals(id))));
+					break;
+				case "set":
+					MoveTo(id);
+					break;
+				default:
+					break;
+			}
+			Session["oceanMessaging"] = cache;
+
+			var currentPosition = cache.Select((n, i) => new { rowid = n.id, index = i }).FirstOrDefault(x => x.rowid.Equals(id)).index;
+			var pageNumber = (int)Math.Ceiling((float)(currentPosition + 1) / float.Parse(Request["rowLimit"]));
+			return pageNumber;
+		}
+
+		byte[] GetValuesExportCsv()
+		{
+			cache = GetOceanMessagingCache();
+			using (var wrt = new StringWriter())
+			using (var csv = new CsvHelper.CsvWriter(wrt))
+			{
+				new List<string> { "Client ID", "Carrier SCAC", "Service Provider" }.ForEach(f => csv.WriteField(f));
+				csv.NextRecord();
+
+				var node = cache.First;
+				while (node != null)
+				{
+					var value = node.Value;
+					new List<string> { value.client, value.carrier, value.provider }.ForEach(f => csv.WriteField(f));
+					csv.NextRecord();
+					node = node.Next;
+				}
+				return Encoding.Default.GetBytes(wrt.ToString());
+			}
+		}
+
+		void ImportCsvCore()
+		{
+			cache = new LinkedList<Row>();
+			ReplaceCache();
+			ValidateAndReplaceInvalidCache();
+			Session["oceanMessaging"] = cache;
+		}
+
+		#region Private Methods
+
+		LinkedList<Row> GetOceanMessagingCache()
+		{
+			return Session["oceanMessaging"] as LinkedList<Row> ?? new LinkedList<Row>(ValuesDatabase());
+		}
+
+		List<dynamic> FilterValues(IEnumerable<dynamic> vals)
+		{
+			string searchField = Request["searchField"];
+			bool filtered = Boolean.Parse(Request["_search"]);
+
+			if (!String.IsNullOrWhiteSpace(searchField))
+			{
+				vals = SearchValues(vals, searchField);
+			}
+			else if (filtered)
+			{
+				string client = Request["client"];
+				string carrier = Request["carrier"];
+				string provider = Request["provider"];
+				if (!String.IsNullOrWhiteSpace(client))
+					vals = vals.Where(c => c.client.ToUpper().Contains(client.ToUpper()));
+				if (!String.IsNullOrWhiteSpace(carrier))
+					vals = vals.Where(c => c.carrier.ToUpper().Contains(carrier.ToUpper()));
+				if (!String.IsNullOrWhiteSpace(provider))
+					vals = vals.Where(c => c.provider.ToUpper().Contains(provider.ToUpper()));
+			}
+
+			return vals.ToList<dynamic>();
+		}
+
+		IEnumerable<dynamic> SearchValues(IEnumerable<dynamic> vals, string searchField)
+		{
+			string searchString = Request["searchString"];
+			string searchOper = Request["searchOper"];
+
+			switch (searchField)
+			{
+				case "client":
+					switch (searchOper)
+					{
+						case "eq":
+							vals = vals.Where(v => v.client.ToUpper().Equals(searchString.ToUpper()));
+							break;
+						case "bw":
+							vals = vals.Where(v => v.client.ToUpper().StartsWith(searchString.ToUpper()));
+							break;
+						case "ew":
+							vals = vals.Where(v => v.client.ToUpper().EndsWith(searchString.ToUpper()));
+							break;
+						case "cn":
+							vals = vals.Where(v => v.client.ToUpper().Contains(searchString.ToUpper()));
+							break;
+					}
+					break;
+				case "carrier":
+					switch (searchOper)
+					{
+						case "eq":
+							vals = vals.Where(v => v.carrier.ToUpper().Equals(searchString.ToUpper()));
+							break;
+						case "bw":
+							vals = vals.Where(v => v.carrier.ToUpper().StartsWith(searchString.ToUpper()));
+							break;
+						case "ew":
+							vals = vals.Where(v => v.carrier.ToUpper().EndsWith(searchString.ToUpper()));
+							break;
+						case "cn":
+							vals = vals.Where(v => v.carrier.ToUpper().Contains(searchString.ToUpper()));
+							break;
+					}
+					break;
+				case "provider":
+					switch (searchOper)
+					{
+						case "eq":
+							vals = vals.Where(v => v.provider.ToUpper().Equals(searchString.ToUpper()));
+							break;
+						case "bw":
+							vals = vals.Where(v => v.provider.ToUpper().StartsWith(searchString.ToUpper()));
+							break;
+						case "ew":
+							vals = vals.Where(v => v.provider.ToUpper().EndsWith(searchString.ToUpper()));
+							break;
+						case "cn":
+							vals = vals.Where(v => v.provider.ToUpper().Contains(searchString.ToUpper()));
+							break;
+					}
+					break;
+				default: break;
+			}
+
+			return vals;
+		}
+
+		void AddValues(string id)
+		{
+			var afterRowId = Request["afterRowId"];
+			var client = Request["client"];
+			var carrier = Request["carrier"];
+			var provider = Request["provider"];
+
+			// form adding function always have id equals "_empty"
+			// inline-adding function is posted with custom id.
+			if (id.Equals("_empty"))
+				id = Request["nextid"];
+			else
+			{
+				if (String.IsNullOrWhiteSpace(client)) client = ADDVALUE_DEFAULTCLIENT;
+			}
+
+			LinkedListNode<Row> afterRow = cache.Find(cache.FirstOrDefault(x => x.id.Equals(afterRowId)));
+			if (String.IsNullOrWhiteSpace(carrier)) carrier = "[ANY]";
+			if (String.IsNullOrWhiteSpace(client) || String.IsNullOrWhiteSpace(provider))
+				throw new InvalidOperationException("Client and Provider cannot be empty.");
+
+			cache.AddBefore(afterRow, new Row { id = id, client = client, carrier = carrier, provider = provider });
+		}
+
+		void EditValues(string id)
+		{
+			var existed = cache.Any(x => x.id.Equals(id));
+			if (!existed)
+			{
+				AddValues(id);
+			}
+			else
+			{
+				var currentRow = cache.FirstOrDefault(x => x.id.Equals(id));
+				currentRow.client = String.IsNullOrWhiteSpace(Request["client"]) ? "[ANY]" : Request["client"];
+				currentRow.carrier = String.IsNullOrWhiteSpace(Request["carrier"]) ? "[ANY]" : Request["carrier"];
+				currentRow.provider = Request["provider"];
+			}
+		}
+
+		void DeleteValues(string id)
+		{
+			cache.Remove(cache.Find(cache.FirstOrDefault(x => x.id.Equals(id))));
+		}
+
+		void MoveUp(LinkedListNode<Row> currentRow)
+		{
+			var previous = currentRow.Previous;
+			cache.Remove(currentRow);
+			cache.AddBefore(previous, currentRow);
+		}
+
+		void MoveDown(LinkedListNode<Row> currentRow)
+		{
+			var next = currentRow.Next;
+			cache.Remove(currentRow);
+			cache.AddAfter(next, currentRow);
+		}
+
+		void MoveTo(string id)
+		{
+			var newPosition = long.Parse(Request["newPosition"]);
+			newPosition--; // index = position - 1, newpos is a number.
+			long count = 0;
+			long currentPosition = -1;
+			LinkedListNode<Row> currentRow = null, targetRow = null;
+			bool cp = false, np = false;
+			var node = cache.First;
+			while (node != cache.Last) // change all id except last one
+			{
+				if (cp && np)
+				{
+					break;
+				}
+				if (node.Value.id.Equals(id))
+				{
+					currentPosition = count;
+					currentRow = node;
+					cp = true;
+					if (currentPosition == newPosition)
+					{
+						break;
+					}
+				}
+				if (count == newPosition)
+				{
+					np = true;
+					targetRow = node;
+				}
+				count++;
+				node = node.Next;
+			}
+
+			if (currentPosition != -1 && targetRow != null && currentRow != null)
+			{
+				cache.Remove(currentRow);
+				if (newPosition < currentPosition)
+					cache.AddBefore(targetRow, currentRow);
+				else
+					cache.AddAfter(targetRow, currentRow);
+			}
+		}
+
+		void ReplaceCache()
+		{
+			LinkedListNode<Row> lastrow = null;
+			using (var rdr = new StreamReader(Request.Files["uploadFile"].InputStream))
+			using (var csv = new CsvHelper.CsvParser(rdr))
+			{
+				var fields = csv.Read();
+				int count = 0;
+				while ((fields = csv.Read()) != null)
+				{
+					if (fields[0] == "Default")
+					{
+						lastrow = new LinkedListNode<Row>(new Row { id = "default", client = "Default", carrier = "Default", provider = fields[2] });
+						continue;
+					}
+					var id = "" + count++;
+					cache.AddLast(new Row { id = id, client = fields[0], carrier = fields[1], provider = fields[2] });
+				}
+			}
+			cache.AddLast(lastrow ?? new LinkedListNode<Row>(new Row { id = "default", client = "[ANY]", carrier = "[ANY]", provider = "" }));
+		}
+
+		void ValidateAndReplaceInvalidCache()
+		{
+			var service = context.eHubClients.First(s => s.CC_ID.Equals("SHIPPING_INSTRUCTION"));
+			var provider = service.eHubServiceProviders_Service.Select(s => s.eHubClient_Provider.CC_ID);
+			var clients = context.eHubClients.Select(c => c.CC_ID).ToList();
+
+			var node = cache.First;
+
+			while (node != cache.Last) // ignore last row which is default
+			{
+				var value = node.Value;
+				if (!clients.Contains(value.client))
+				{
+					value.client = "[ANY]";
+				}
+				if (!provider.Contains(value.provider))
+				{
+					value.provider = provider.First();
+				}
+				node = node.Next;
+			}
+
+			var lastValue = node.Value; // last node
+			if (!provider.Contains(lastValue.provider))
+			{
+				lastValue.provider = "Reject";
+			}
+			node = node.Next;
+		}
+
+		#endregion
+
+		#endregion
+
+		#region Database Linker
+
+		string SaveAllCore()
+		{
+			BackUp();
+			if (Session["oceanMessaging"] != null)
+			{
+				cache = GetOceanMessagingCache();
+				try
+				{
+					SaveToDatabase(cache);
+				}
+				catch (Exception)
+				{
+					// Report if we have
+					Restore();
+					return "Fail to save all data into database.";
+				}
+				ClearCache();
+				return "Success tranfering all the data into database";
+			}
+			return "No changes to be applied.";
+		}
+
+		void SaveToDatabase(LinkedList<Row> cache)
+		{
+			var lastRowDefault = cache.Last.Value;
+
+			var newSubRules = new List<Criterion>();
+
+			var count = 0;
+			var node = cache.First;
+			while (node != cache.Last)
+			{
+				node.Value.id = count++ + "";
+				var value = node.Value;
+				var expression = new List<string>();
+				if (!value.client.Equals("[ANY]"))
+				{
+					expression.Add(string.Format("[@SourceParty,Equal,{0}]", value.client));
+				}
+				if (!value.carrier.Contains("[") && !value.carrier.Contains("]"))
+				{
+					expression.Add(string.Format("[@SCAC,Equal,{0}]", value.carrier));
+				}
+				var criterion = new Condition(context);
+				criterion.Expression = string.Join(" && ", expression.ToArray());
+				if (context.eHubClients.Any()) criterion.Recipient = context.eHubClients.First(c => c.CC_ID == value.provider);
+				newSubRules.Add(criterion);
+				node = node.Next;
+			}
+
+			rule.SubRules.Load(newSubRules);
+			rule.DefaultRecipient = lastRowDefault.provider.Equals("Reject") ? null : context.eHubClients.First(c => c.CC_ID == lastRowDefault.provider);
+			context.SaveChanges();
+		}
+
+		List<dynamic> GetClientsDropDown()
+		{
+			var clients = context.eHubClients.Select(c => new
+			{
+				value = c.CC_ID,
+				label = c.CC_ID + " - " + c.CC_FriendlyName
+			});
+			var count = clients.Count();
+			return clients.ToList<dynamic>();
+		}
+
+		object GetClients()
+		{
+			int page = Convert.ToInt32(Request["page"]);
+			int rows = Convert.ToInt32(Request["rows"]);
+			string sidx = Request["sidx"];
+			string sord = Request["sord"];
+			bool filtered = Boolean.Parse(Request["_search"]);
+
+			var clients = context.eHubClients.Select(c => new
+			{
+				CC_ID = c.CC_ID,
+				CC_FriendlyName = c.CC_FriendlyName
+			});
+
+			if (filtered)
+			{
+				string ccid = Request["CC_ID"];
+				string ccname = Request["CC_FriendlyName"];
+				if (!String.IsNullOrWhiteSpace(ccid))
+					clients = clients.Where(c => c.CC_ID.StartsWith(ccid));
+				if (!String.IsNullOrWhiteSpace(ccname))
+					clients = clients.Where(c => c.CC_FriendlyName.Contains(ccname));
+			}
+
+			int count = clients.Count();
+
+			switch (sidx + " " + sord)
+			{
+				case "CC_ID asc":
+					clients = clients.OrderBy(c => c.CC_ID).ThenBy(c => c.CC_FriendlyName);
+					break;
+				case "CC_ID desc":
+					clients = clients.OrderByDescending(c => c.CC_ID).ThenBy(c => c.CC_FriendlyName);
+					break;
+				case "CC_FriendlyName asc":
+					clients = clients.OrderBy(c => c.CC_FriendlyName).ThenBy(c => c.CC_ID);
+					break;
+				case "CC_FriendlyName desc":
+					clients = clients.OrderByDescending(c => c.CC_FriendlyName).ThenBy(c => c.CC_ID);
+					break;
+				default:
+					clients = clients.OrderBy(c => c.CC_ID).ThenBy(c => c.CC_FriendlyName);
+					break;
+			}
+
+			var list = clients.Skip((page - 1) * rows).Take(rows).ToList();
+			list.Insert(0, new { CC_ID = "[ANY]", CC_FriendlyName = "[ANY]" });
+
+			return new
+			{
+				page = page,
+				total = Math.Ceiling((double)count / (double)rows),
+				records = count,
+				eHubClients = list
+			};
+		}
+
+		object GetServiceProviders()
+		{
+			int page = Convert.ToInt32(Request["page"]);
+			int rows = Convert.ToInt32(Request["rows"]);
+			string sidx = Request["sidx"];
+			string sord = Request["sord"];
+			bool filtered = Boolean.Parse(Request["_search"]);
+
+			var service = context.eHubClients.First(s => s.CC_ID.Equals("SHIPPING_INSTRUCTION"));
+
+			var provider = service.eHubServiceProviders_Service.Select(s => new { ID = s.eHubClient_Provider.CC_ID });
+
+			if (filtered)
+			{
+				string id = Request["ID"];
+				if (!String.IsNullOrWhiteSpace(id))
+					provider = provider.Where(c => c.ID.ToUpper().Contains(id.ToUpper()));
+			}
+
+			int count = provider.Count();
+
+			switch (sidx + " " + sord)
+			{
+				case "ID desc":
+					provider = provider.OrderByDescending(c => c.ID);
+					break;
+				default:
+					provider = provider.OrderBy(c => c.ID);
+					break;
+			}
+
+			return new
+			{
+				page = page,
+				total = Math.Ceiling((double)count / (double)rows),
+				records = count,
+				serviceProvider = provider.Skip((page - 1) * rows).Take(rows).ToList()
+			};
+		}
+
+		List<dynamic> GetProvidersDropDown()
+		{
+			var service = context.eHubClients.First(s => s.CC_ID.Equals("SHIPPING_INSTRUCTION"));
+
+			var provider = service.eHubServiceProviders_Service.Select(s => new { value = s.eHubClient_Provider.CC_ID, label = s.eHubClient_Provider.CC_ID });
+			return provider.ToList<dynamic>();
+		}
+
+		List<Row> ValuesDatabase()
+		{
+			int count = 0;
+
+			var subRules = rule.SubRules;
+			var oceanMessagingData = subRules.Select(x =>
+			{
+				var citeria = x as Condition;
+				if (!string.IsNullOrEmpty(citeria.Expression))
+				{
+                    var condition = citeria.Expression.Split(new[] { "&&" }, StringSplitOptions.None).Select(y => y.Trim().Split(new[] { "[", "]", "," }, StringSplitOptions.RemoveEmptyEntries));
+                    var mclient = condition.FirstOrDefault(a => a[0] == "@SourceParty");
+					var mcarrier = condition.FirstOrDefault(a => a[0] == "@SCAC");
+					return new Row { id = ++count + "", client = mclient != null ? mclient.Last() : "[ANY]", carrier = mcarrier != null ? mcarrier.Last() : "[ANY]", provider = citeria.Recipient.CC_ID };
+				}
+				else
+				{
+					return new Row { id = ++count + "", client = "[ANY]", carrier = "[ANY]", provider = citeria.Recipient.CC_ID };
+				}
+			});
+
+			var oceanMessagingList = oceanMessagingData.ToList<Row>();
+
+			var defaultProvider = rule.DefaultRecipient;
+			oceanMessagingList.Add(new Row { id = "default", client = "Default", carrier = "Default", provider = defaultProvider == null ? "Reject" : defaultProvider.CC_ID });
+
+			return oceanMessagingList;
+		}
+
+		void BackUp()
+		{
+			backup = new LinkedList<Row>(ValuesDatabase());
+		}
+
+		void Restore()
+		{
+			SaveToDatabase(backup);
+		}
+
+		#endregion
+
+		#endregion
+	}
+
+	class Row
+	{
+		internal string id;
+		internal string client;
+		internal string carrier;
+		internal string provider;
+	}
+}
